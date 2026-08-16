@@ -1,0 +1,6 @@
+# dsh-tool-nu — bundle patch: activation row for the profile layer.
+# Registers the `nu` tool (Nushell with bash-for-windows compatibility)
+# so every agent in the profile can run bash-compatible commands on Windows.
+- insert:
+    - id: tool-nu
+      name: 'dsh-tool-nu'
