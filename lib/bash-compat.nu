@@ -61,17 +61,73 @@ def grepi [pattern: string, ...files: string] {
     }
 }
 
-# Head and tail equivalents
-def head [n: int = 10] { $in | first $n }
-def tail [n: int = 10] { $in | last $n }
+# Head and tail equivalents.
+# Accepts every bash/POSIX spelling: `head 5`, `head -5`, `head -n 5`, `head --lines 5`.
+# Input may be a list/table/range OR text piped out of an external command. The type
+# dispatch is required: a bare `first`/`last` refuses text input and dies with
+# `only_supports_this_input_type`, which made `^cat file | head 3` unusable.
+def head [
+    count: int = 10,        # `head 5` or `head -5`
+    --lines(-n): int,       # `head -n 5` or `head --lines 5`
+] {
+    let requested = (if ($lines | is-empty) { $count } else { $lines })
+    # `0 - $requested`, NOT `-$requested`: nushell parses a bare `-$var` as the *string*
+    # literal "-$requested", which then blows up inside `first`/`last` as a type mismatch.
+    let k = (if $requested < 0 { 0 - $requested } else { $requested })
+    let input = $in
+    let kind = ($input | describe)
+    if ($kind | str starts-with "list") or ($kind | str starts-with "table") or ($kind | str starts-with "range") {
+        $input | first $k
+    } else {
+        $input | lines | first $k
+    }
+}
 
-# Wc equivalent
-def wc [] {
-    let content = $in
-    let lines = ($content | lines | length)
-    let words = ($content | str replace -a '\n' ' ' | split words | length)
-    let chars = ($content | str length)
-    {lines: $lines, words: $words, chars: $chars}
+def tail [
+    count: int = 10,        # `tail 5` or `tail -5`
+    --lines(-n): int,       # `tail -n 5` or `tail --lines 5`
+] {
+    let requested = (if ($lines | is-empty) { $count } else { $lines })
+    let k = (if $requested < 0 { 0 - $requested } else { $requested })
+    let input = $in
+    let kind = ($input | describe)
+    if ($kind | str starts-with "list") or ($kind | str starts-with "table") or ($kind | str starts-with "range") {
+        $input | last $k
+    } else {
+        $input | lines | last $k
+    }
+}
+
+# Wc equivalent.
+#   ... | wc        -> {lines: N, words: N, chars: N}
+#   ... | wc -l     -> line count as a plain number, so `... | wc -l` composes
+#   ... | wc -w     -> word count
+#   ... | wc -c     -> character count
+# Same type dispatch as head/tail, so it also works on external command output.
+def wc [
+    --lines(-l),        # print only the line count
+    --words(-w),        # print only the word count
+    --chars(-c),        # print only the character count
+] {
+    let input = $in
+    let kind = ($input | describe)
+    let text = (if ($kind | str starts-with "list") or ($kind | str starts-with "table") {
+        $input | each {|row| $row | into string } | str join "\n"
+    } else {
+        $input | into string
+    })
+    let n_lines = ($text | lines | length)
+    let n_words = ($text | split words | length)
+    let n_chars = ($text | str length)
+    if $lines {
+        $n_lines
+    } else if $words {
+        $n_words
+    } else if $chars {
+        $n_chars
+    } else {
+        {lines: $n_lines, words: $n_words, chars: $n_chars}
+    }
 }
 
 # Sort equivalents
@@ -79,8 +135,56 @@ def wc [] {
 def sort-reverse [] { $in | sort | reverse }
 def sort-numeric [] { $in | sort-by {|x| $x | into int} }
 
-# Uniq equivalent
-def uniq [] { $in | uniq }
+# Uniq equivalent — bash semantics: only *adjacent* duplicates are collapsed.
+#   ... | uniq        -> drop adjacent duplicates
+#   ... | uniq -c     -> "COUNT ITEM" per run
+#   ... | uniq -d     -> only items whose run length is > 1
+#   ... | uniq -u     -> only items whose run length is == 1
+#   ... | uniq -i     -> compare case-insensitively
+# Accepts list/table/range input and text from external commands.
+# DO NOT "simplify" this back to `def uniq [] { $in | uniq }`: `def` shadows the
+# nushell builtin, so the body calls itself and dies with
+# `nu::shell::recursion_limit_reached`. (That was the original bug here.)
+def uniq [
+    --count(-c),        # prefix each line with its number of occurrences
+    --repeated(-d),     # only print duplicated runs
+    --unique(-u),       # only print non-duplicated runs
+    --ignore-case(-i),  # compare case-insensitively
+] {
+    let input = $in
+    let kind = ($input | describe)
+    let rows = (if ($kind | str starts-with "list") or ($kind | str starts-with "table") {
+        $input
+    } else {
+        $input | lines
+    })
+    # Fold the rows into runs: extend the current run, or start a new one.
+    let groups = ($rows | reduce --fold [] {|row, acc|
+        let key = (if $ignore_case { $row | into string | str lowercase } else { $row | into string })
+        if ($acc | is-empty) {
+            [{key: $key, item: $row, count: 1}]
+        } else if (($acc | last).key == $key) {
+            let prev = ($acc | last)
+            ($acc | take (($acc | length) - 1)) | append {key: $key, item: $prev.item, count: ($prev.count + 1)}
+        } else {
+            $acc | append {key: $key, item: $row, count: 1}
+        }
+    })
+    let picked = (
+        if $repeated {
+            $groups | where count > 1
+        } else if $unique {
+            $groups | where count == 1
+        } else {
+            $groups
+        }
+    )
+    if $count {
+        $picked | each {|g| $"($g.count) ($g.item)" }
+    } else {
+        $picked | each {|g| $g.item }
+    }
+}
 
 # Cut equivalent
 def cut [delimiter: string, field: int] {
