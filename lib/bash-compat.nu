@@ -201,8 +201,11 @@ def psg [pattern: string] { ps | where name =~ $pattern }
 def psk [pattern: string] { ps | where name =~ $pattern | each { |proc| kill $proc.pid } }
 
 # System information (Windows compatible)
+# `sys` on its own returns a formatted *string* in Nushell 0.11x, so
+# `sys | get <field>` fails with only_supports_this_input_type. The structured
+# data lives in the sub-tables: sys host / sys mem / sys cpu / sys disks.
 def free [] { sys mem }
-def uptime [] { sys | get uptime }
+def uptime [] { sys host | get uptime }
 def whoami [] { $env.USERNAME }
 
 # Process monitoring (Windows compatible)
@@ -264,14 +267,22 @@ alias grh = git reset --hard
 # ENVIRONMENT AND SHELL CONFIGURATION
 # ============================================================================
 
-# Environment shortcuts
+# Environment shortcuts.
 def env [] { $env | table }
-def setenv [name: string, value: string] { $env | upsert $name $value }
-def unsetenv [name: string] { hide-env $name }
+# Nushell runs a `def` body in a child scope, so a function CANNOT change the
+# caller's environment. These three used to look like they worked while
+# silently doing nothing (measured: `setenv FOO bar` left the variable unset,
+# `path-add` left PATH unchanged). They now fail loudly instead of lying.
+def setenv [name: string, value: string] {
+    error make {msg: $"setenv is not possible in Nushell: a function cannot modify the caller's environment. Assign the variable at the call site instead. Requested name: ($name)"}
+}
+def unsetenv [name: string] {
+    error make {msg: $"unsetenv is not possible in Nushell: a function cannot modify the caller's environment. Hide the variable at the call site instead. Requested name: ($name)"}
+}
 
 # Path operations
 def path-add [path: string] {
-    $env.PATH = ($env.PATH | prepend $path)
+    error make {msg: $"path-add is not possible in Nushell: a function cannot modify the caller's PATH. Prepend to the PATH variable at the call site instead. Requested path: ($path)"}
 }
 
 def path-show [] {
@@ -361,19 +372,20 @@ def locate [pattern: string] { ls **/* | where name =~ $pattern | get name }
 # Tree view (available in Windows)
 alias tree = ^tree
 
-# Disk space (Windows compatible)
+# Disk space (Windows compatible).
+# `wmic` was removed from Windows 11, so use Nushell's own structured disk table.
 def disk-free [] {
-    ^wmic logicaldisk get size,freespace,caption
+    sys disks | select mount total free
 }
 
 # Memory info
-def mem-info [] { sys | get mem }
+def mem-info [] { sys mem }
 
 # CPU info
-def cpu-info [] { sys | get cpu }
+def cpu-info [] { sys cpu }
 
-# Load averages
-def load-avg [] { sys | get load_avg }
+# Load averages (per-CPU, as Nushell reports them)
+def load-avg [] { sys cpu | get load_average }
 
 # ============================================================================
 # BASH-STYLE COMPLETION AND SHORTCUTS
@@ -412,8 +424,10 @@ def timestamp [] { date now | format date "%Y-%m-%d %H:%M:%S" }
 # Use built-in PowerShell Get-Date
 def cal [] { ^powershell -Command "Get-Date" }
 
-# Calculator
-def calc [expr: string] { nu -c $"math eval \"($expr)\"" }
+# Calculator.
+# `math eval` no longer exists in Nushell, and `nu -c "1+2"` treats the text as
+# an external command name, so hand the expression to PowerShell instead.
+def calc [expr: string] { ^powershell -Command $expr }
 
 # Weather (requires curl - install via winget)
 # def weather [city?: string] {

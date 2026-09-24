@@ -17,7 +17,7 @@ Registers a `nu` tool for every agent in the profile. Each call runs a fresh Nus
 - `head`, `tail` — first/last N. Accepts every bash spelling (`head 5`, `head -5`, `head -n 5`, `head --lines 5`) and works on both lists/tables and text piped from external commands
 - `wc` — `{lines, words, chars}` by default; `wc -l` / `-w` / `-c` print a plain number
 - `uniq` — collapses *adjacent* duplicates (bash semantics, unlike Nushell's built-in `uniq`, which dedupes globally); supports `-c`, `-d`, `-u`, `-i`
-- `sort`, `cut` — text processing
+- `sort`, `cut` — `cut` takes text or lists; `sort` is Nushell's own builtin and needs a list, so pipe text through `lines` first
 - `ps`, `psg`, `psk`, `top`, `free`, `uptime`, `whoami` — system management
 - `kill-by-name`, `kill-by-port` — process termination
 - `g`, `gs`, `ga`, `gc`, `gco`, `gd`, `gl`, `gp`, `gpl`, `gb`, `gba`, `gr` — git shortcuts
@@ -36,12 +36,13 @@ Nushell is not bash, and this layer only covers the commands it defines. Real ba
 | `for i in 1 2; do ...; done` | ✗ use `for i in [1 2] { ... }` |
 | `f() { ... }` | ✗ use `def f [] { ... }` |
 | `&&` / `\|\|` | ✗ use `;` / `and` / `or` |
+| `setenv FOO bar`, `path-add ...` | ✗ a Nushell function cannot modify the caller's environment — these fail loudly instead of silently doing nothing |
 
-Pipelines between the aliases do work, because they are ordinary Nushell commands:
+Nushell's own builtins (`sort`, `where`, `select`, …) operate on lists, while text coming out of an external command is a byte stream. Pipe text through `lines` first. The aliases defined here (`grep`, `cut`, `head`, `tail`, `wc`, `uniq`) already do that for you:
 
 ```nu
 ^ls -1 | grep "tool" | head -3
-"b\na\nc\n" | sort | uniq -c
+"b\na\nc\n" | lines | sort | uniq -c
 ```
 
 If you need real bash syntax on Windows, use [dsh-tool-brush](https://github.com/lilyco-42/dsh-tool-brush) — or run both plugins side by side and let the agent pick.
